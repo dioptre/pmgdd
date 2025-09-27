@@ -18,7 +18,8 @@ TEST_SRCS := $(addprefix test/, \
                          mtaddfindremovetest.cc \
                          rotest.cc BindingsTest.java DateTest.java \
                          neighbortest.cc aborttest.cc \
-                         test720.cc test750.cc test767.cc)
+                         test720.cc test750.cc test767.cc \
+                         capnproto_production_test.cc)
 
 # Derive a list of objects.
 TEST_COBJS := $(patsubst %.cc,%.o, \
@@ -37,10 +38,20 @@ TESTS += $(TEST_TESTS)
 # The pmgd libraries against which we link.
 TEST_LIBS = lib/pmgd.lib lib/pmgd-util.lib
 
+# CapnProto configuration for tests
+CAPNP_ROOT ?= /opt/homebrew
+CAPNP_INCLUDES := -I$(CAPNP_ROOT)/include -I$(ROOTDIR)/schema
+CAPNP_LIBS := -L$(CAPNP_ROOT)/lib -lcapnp -lkj
+
 # Override the global defaults.
 TEST_INCLUDES := $(INCLUDES) -I$(ROOTDIR)/util
 TEST_CFLAGS := --std=c++11 $(TEST_INCLUDES) $(OPT) $(FFLAGS) $(WFLAGS) \
                  -DPMFLUSH=$(PMFLUSH) -MP -MMD
+
+# Special flags for CapnProto test (disable problematic optimization flags for clang)
+CAPNP_FFLAGS := -fomit-frame-pointer -fno-strict-aliasing -fno-threadsafe-statics -fnon-call-exceptions
+CAPNP_TEST_CFLAGS := --std=c++14 $(TEST_INCLUDES) $(CAPNP_INCLUDES) $(OPT) $(CAPNP_FFLAGS) \
+                     -DPMFLUSH=$(PMFLUSH) -MP -MMD -Wno-error
 
 # Default rule for linking a test.
 test/%: test/%.o $(TEST_LIBS)
@@ -80,6 +91,15 @@ test/stripelocktest: test/stripelocktest.o $(TEST_LIBS)
 test/mtaddfindremovetest: test/mtaddfindremovetest.o $(TEST_LIBS)
 	$(call print,LINK,$@)
 	$(CC) $(OPT) -o $@ $< $(TEST_LIBS) -lpthread
+
+# Special case for CapnProto production test
+test/capnproto_production_test.o: test/capnproto_production_test.cc $(MAKEFILE_LIST) schema/pmgd.capnp.h
+	$(call print,CC,$@)
+	$(CC) $(CAPNP_TEST_CFLAGS) -o $@ -c $<
+
+test/capnproto_production_test: test/capnproto_production_test.o src/pmgd_schema.o
+	$(call print,LINK,$@)
+	$(CC) $(OPT) -o $@ $< src/pmgd_schema.o $(CAPNP_LIBS)
 
 # Override the global rule for building a preprocessed file from a C++ file.
 test/%.i: test/%.cc $(MAKEFILE_LIST)

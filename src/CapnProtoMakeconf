@@ -1,0 +1,149 @@
+##
+# CapnProto Database Makeconf
+#
+# This file extends the main Makeconf to include CapnProto support
+# and the new database implementation.
+
+# CapnProto includes and libraries
+CAPNP_ROOT ?= /usr/local
+CAPNP_INCLUDES := -I$(CAPNP_ROOT)/include
+CAPNP_LIBS := -L$(CAPNP_ROOT)/lib -lcapnp -lcapnp-rpc -lkj -lkj-async
+
+# Check if Cap'n Proto is installed
+CAPNP_CHECK := $(shell which capnp 2>/dev/null)
+ifeq ($(CAPNP_CHECK),)
+    $(error Cap'n Proto not found. Please install Cap'n Proto: brew install capnproto)
+endif
+
+# macOS specific libraries and flags
+ifeq ($(shell uname),Darwin)
+    DARWIN_FLAGS := -DPMGD_DARWIN -framework CoreFoundation
+    DARWIN_LIBS := -framework Foundation -framework CoreServices
+else
+    DARWIN_FLAGS :=
+    DARWIN_LIBS :=
+endif
+
+# Compression support (zlib is standard on macOS)
+COMPRESSION_LIBS := -lz
+
+# Additional includes for the new implementation
+CAPNP_DB_INCLUDES := $(CAPNP_INCLUDES) -I$(ROOTDIR)/schema
+
+# Updated CFLAGS for CapnProto support
+CAPNP_CFLAGS := $(CFLAGS) $(CAPNP_DB_INCLUDES) $(DARWIN_FLAGS) -DPMGD_CAPNPROTO_ENABLED
+
+# Schema files
+SCHEMA_DIR := $(ROOTDIR)/schema
+SCHEMA_FILES := $(SCHEMA_DIR)/pmgd.capnp
+SCHEMA_HEADERS := $(SCHEMA_FILES:.capnp=.capnp.h)
+SCHEMA_SOURCES := $(SCHEMA_FILES:.capnp=.capnp.c++)
+
+# CapnProto database source files
+CAPNP_DB_SOURCES := \
+    CapnProtoDatabase.cc \
+    BatchManager.cc \
+    CapnProtoGraphImpl.cc
+
+CAPNP_DB_HEADERS := \
+    CapnProtoDatabase.h \
+    BatchManager.h \
+    CapnProtoGraphImpl.h
+
+CAPNP_DB_OBJECTS := $(CAPNP_DB_SOURCES:.cc=.o)
+
+# Add CapnProto objects to the main object list
+CAPNP_OBJS := $(CAPNP_DB_OBJECTS) $(SCHEMA_SOURCES:.c++=.o)
+
+# Rules for generating CapnProto files
+%.capnp.h %.capnp.c++: %.capnp
+	$(call print,CAPNP,$@)
+	cd $(dir $<) && capnp compile -oc++ $(notdir $<)
+
+# Special compilation rules for CapnProto files
+$(CAPNP_DB_OBJECTS): %.o: %.cc $(SCHEMA_HEADERS) $(MAKEFILE_LIST)
+	$(call print,CC,$@)
+	$(CC) $(CAPNP_CFLAGS) -o $@ -c $<
+
+$(SCHEMA_SOURCES:.c++=.o): %.o: %.c++ $(MAKEFILE_LIST)
+	$(call print,CC,$@)
+	$(CC) $(CAPNP_CFLAGS) -o $@ -c $<
+
+# CapnProto library
+CAPNP_LIB := libpmgd-capnp.a
+
+$(CAPNP_LIB): $(CAPNP_OBJS)
+	$(call print,AR,$@)
+	$(AR) crs $@ $^
+
+# Migration utility
+MIGRATION_TOOL := pmgd-migrate
+MIGRATION_SOURCES := migration_tool.cc
+MIGRATION_OBJECTS := $(MIGRATION_SOURCES:.cc=.o)
+
+$(MIGRATION_TOOL): $(MIGRATION_OBJECTS) $(CAPNP_LIB)
+	$(call print,LINK,$@)
+	$(CC) $(CAPNP_CFLAGS) -o $@ $^ $(CAPNP_LIBS) $(DARWIN_LIBS) $(COMPRESSION_LIBS)
+
+# Test programs for the new implementation
+CAPNP_TESTS := \
+    capnp_basic_test \
+    capnp_batch_test \
+    capnp_migration_test \
+    capnp_darwin_test
+
+capnp_basic_test: capnp_basic_test.o $(CAPNP_LIB)
+	$(call print,LINK,$@)
+	$(CC) $(CAPNP_CFLAGS) -o $@ $^ $(CAPNP_LIBS) $(DARWIN_LIBS) $(COMPRESSION_LIBS)
+
+capnp_batch_test: capnp_batch_test.o $(CAPNP_LIB)
+	$(call print,LINK,$@)
+	$(CC) $(CAPNP_CFLAGS) -o $@ $^ $(CAPNP_LIBS) $(DARWIN_LIBS) $(COMPRESSION_LIBS)
+
+capnp_migration_test: capnp_migration_test.o $(CAPNP_LIB)
+	$(call print,LINK,$@)
+	$(CC) $(CAPNP_CFLAGS) -o $@ $^ $(CAPNP_LIBS) $(DARWIN_LIBS) $(COMPRESSION_LIBS)
+
+capnp_darwin_test: capnp_darwin_test.o $(CAPNP_LIB)
+	$(call print,LINK,$@)
+	$(CC) $(CAPNP_CFLAGS) -o $@ $^ $(CAPNP_LIBS) $(DARWIN_LIBS) $(COMPRESSION_LIBS)
+
+# Add to the main build targets
+LIBS += $(CAPNP_LIB)
+BINS += $(MIGRATION_TOOL)
+TESTS += $(CAPNP_TESTS)
+
+# Clean targets
+CLEANFILES += $(SCHEMA_HEADERS) $(SCHEMA_SOURCES) $(CAPNP_LIB) $(MIGRATION_TOOL) $(CAPNP_TESTS)
+CLEANFILES += $(CAPNP_OBJS) $(MIGRATION_OBJECTS)
+
+# Dependencies
+$(CAPNP_DB_OBJECTS): $(SCHEMA_HEADERS)
+$(MIGRATION_OBJECTS): $(SCHEMA_HEADERS)
+
+# Help target
+.PHONY: capnp-help
+capnp-help:
+	@$(ECHO) "CapnProto Database Build Targets:"
+	@$(ECHO) "  libpmgd-capnp.a  - CapnProto database library"
+	@$(ECHO) "  pmgd-migrate     - Migration utility from legacy format"
+	@$(ECHO) "  capnp_*_test     - Test programs for CapnProto database"
+	@$(ECHO) ""
+	@$(ECHO) "Environment Variables:"
+	@$(ECHO) "  CAPNP_ROOT       - Cap'n Proto installation root (default: /usr/local)"
+	@$(ECHO) ""
+	@$(ECHO) "Prerequisites:"
+	@$(ECHO) "  brew install capnproto  # On macOS"
+	@$(ECHO) "  apt install capnproto-dev libcapnp-dev  # On Ubuntu"
+
+# Check dependencies
+.PHONY: capnp-check
+capnp-check:
+	@$(ECHO) "Checking CapnProto dependencies..."
+	@which capnp > /dev/null || ($(ECHO) "ERROR: capnp not found. Please install Cap'n Proto."; exit 1)
+	@test -f $(CAPNP_ROOT)/include/capnp/message.h || ($(ECHO) "ERROR: CapnProto headers not found in $(CAPNP_ROOT)/include"; exit 1)
+	@test -f $(CAPNP_ROOT)/lib/libcapnp.a -o -f $(CAPNP_ROOT)/lib/libcapnp.dylib || ($(ECHO) "ERROR: CapnProto libraries not found in $(CAPNP_ROOT)/lib"; exit 1)
+	@$(ECHO) "CapnProto dependencies OK"
+
+# Include this file in the main build
+PHONY += capnp-help capnp-check

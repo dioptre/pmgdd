@@ -10,7 +10,9 @@ SRC_SRCS := $(addprefix src/, \
                         AvlTree.cc AvlTreeIndex.cc \
                         FixedAllocator.cc VariableAllocator.cc FlexFixedAllocator.cc \
                         FixSizeAllocator.cc ChunkAllocator.cc AllocatorUnit.cc Allocator.cc \
-                        linux.cc)
+                        linux.cc \
+                        CapnProtoDatabase.cc BatchManager.cc CapnProtoGraphImpl.cc \
+                        pmgd_schema.cc)
 
 # Derive a list of objects.
 SRC_OBJS := $(patsubst %.cc,%.o, $(SRC_SRCS))
@@ -27,15 +29,28 @@ CLEANFILES += src/pmgd.lib src/libpmgd.so
 # Add lib to the global list of directories to clean.
 CLEANDIRS += lib
 
+# Cap'n Proto configuration
+CAPNP_ROOT ?= /opt/homebrew
+CAPNP_INCLUDES := -I$(CAPNP_ROOT)/include -I$(ROOTDIR)/schema
+CAPNP_LIBS := -L$(CAPNP_ROOT)/lib -lcapnp -lkj
+
 # Override the global defaults.
-SRC_CFLAGS := --std=c++11 $(INCLUDES) $(OPT) $(FFLAGS) -fPIC $(WFLAGS) \
-                -D$(PMOPT) -DPMFLUSH=$(PMFLUSH) -MP -MMD -DCOMMIT_ID="\"$(COMMIT_ID)\""
+SRC_CFLAGS := --std=c++14 $(INCLUDES) $(CAPNP_INCLUDES) $(OPT) $(FFLAGS) -fPIC $(WFLAGS) \
+                -D$(PMOPT) -DPMFLUSH=$(PMFLUSH) -MP -MMD -DCOMMIT_ID="\"$(COMMIT_ID)\"" -DPMGD_CAPNPROTO_ENABLED
+
+# Rule to generate CapnProto files
+%.capnp.h %.capnp.c++: %.capnp
+	$(call print,CAPNP,$@)
+	cd $(dir $<) && capnp compile -oc++ $(notdir $<)
 
 # Override the global rule for building an object file from a C++ file.
 src/%.o: src/%.cc $(MAKEFILE_LIST)
 	$(if $(PMOPT),,$(error "PMOPT must be defined as PM or MSYNC"))
 	$(call print,CC,$@)
 	$(CC) $(SRC_CFLAGS) -o $@ -c $<
+
+# Dependencies for CapnProto files
+src/CapnProtoDatabase.o src/BatchManager.o src/CapnProtoGraphImpl.o src/pmgd_schema.o: schema/pmgd.capnp.h
 
 # A rule to build the library.
 src/pmgd.lib: $(SRC_OBJS)
@@ -50,7 +65,7 @@ lib/pmgd.lib: src/pmgd.lib
 # A rule to build a shared library.
 src/libpmgd.so: $(SRC_OBJS)
 	$(call print,LD,$@)
-	$(CC) -shared -o $@ $(SRC_OBJS)
+	$(CC) -shared -o $@ $(SRC_OBJS) $(CAPNP_LIBS)
 
 # How to install said library.
 lib/libpmgd.so: src/libpmgd.so
