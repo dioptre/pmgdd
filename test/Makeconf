@@ -19,7 +19,7 @@ TEST_SRCS := $(addprefix test/, \
                          rotest.cc BindingsTest.java DateTest.java \
                          neighbortest.cc aborttest.cc \
                          test720.cc test750.cc test767.cc \
-                         capnproto_production_test.cc)
+                         capnproto_production_test.cc zone_architecture_demo.cc)
 
 # Derive a list of objects.
 TEST_COBJS := $(patsubst %.cc,%.o, \
@@ -101,6 +101,20 @@ test/capnproto_production_test: test/capnproto_production_test.o src/pmgd_schema
 	$(call print,LINK,$@)
 	$(CC) $(OPT) -o $@ $< src/pmgd_schema.o $(CAPNP_LIBS)
 
+# Special case for zone architecture demo
+test/zone_architecture_demo.o: test/zone_architecture_demo.cc $(MAKEFILE_LIST) schema/zones.capnp.h schema/pmgd.capnp.h
+	$(call print,CC,$@)
+	$(CC) $(CAPNP_TEST_CFLAGS) -o $@ -c $<
+
+test/zone_architecture_demo: test/zone_architecture_demo.o src/pmgd_schema.o schema/zones.capnp.o
+	$(call print,LINK,$@)
+	$(CC) $(OPT) -o $@ $< src/pmgd_schema.o schema/zones.capnp.o $(CAPNP_LIBS)
+
+# Build zones schema object
+schema/zones.capnp.o: schema/zones.capnp.c++ $(MAKEFILE_LIST)
+	$(call print,CC,$@)
+	$(CC) $(CAPNP_TEST_CFLAGS) -o $@ -c $<
+
 # Override the global rule for building a preprocessed file from a C++ file.
 test/%.i: test/%.cc $(MAKEFILE_LIST)
 	$(call print,CPP,$@)
@@ -114,6 +128,17 @@ test/%.o: test/%.cc $(MAKEFILE_LIST)
 # What to build in this directory.
 PHONY += test
 test: $(TEST_TESTS)
+
+# Convenient targets for CapnProto tests
+PHONY += test-capnproto
+test-capnproto: test/capnproto_production_test
+	@echo "🚀 Running CapnProto Production Test (1M nodes + 1M edges)..."
+	@test/capnproto_production_test
+
+PHONY += test-capnproto-quick  
+test-capnproto-quick:
+	@echo "⚡ Quick CapnProto test..."
+	@test/capnproto_production_test || echo "❌ Build test first: make PMOPT=MSYNC test/capnproto_production_test"
 
 # Don't attempt to rebuild this Makeconf.
 test/Makeconf : ;
